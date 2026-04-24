@@ -136,7 +136,7 @@ module Parquet {
       // https://github.com/chapel-lang/chapel/issues/27764
       if err {
         halt(try! "Unhandled error in extern call %s.%s (%i): %s".format(
-                       modName, procName, lineNo, err.message()));
+                       modName, procName, lineNo, err!.message()));
       }
     }
 

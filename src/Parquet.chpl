@@ -135,8 +135,8 @@ module Parquet {
       // TODO this should be a thrown error in exitContext.
       // https://github.com/chapel-lang/chapel/issues/27764
       if err {
-        halt(try! "Unhandled error in extern call %s.%s (%i)".format(
-                       modName, procName, lineNo));
+        halt(try! "Unhandled error in extern call %s.%s (%i): %s".format(
+                       modName, procName, lineNo, err));
       }
     }
 

@@ -10,9 +10,14 @@ Configure these on `chapel-lang/Parquet` under Settings → Secrets and variable
 
 ### Secrets
 
+The PATs stored in these secrets must be created by the user identified by
+`REGISTRY_FORK_OWNER`, because the workflow pushes to that user's fork of
+`mason-registry`. The PATs are then saved as repository secrets on
+`chapel-lang/Parquet` so the Actions workflows can use them.
+
 | Name | Token type | Scope | Purpose |
 |---|---|---|---|
-| `MASON_REGISTRY_PAT` | Fine-grained PAT | `<fork>/mason-registry` — Contents: read/write | Push release branch to the mason-registry fork |
+| `MASON_REGISTRY_PAT` | Fine-grained PAT | `<REGISTRY_FORK_OWNER>/mason-registry` — Contents: read/write | Push release branch to the mason-registry fork |
 | `MASON_REGISTRY_PRS` | Classic PAT | `public_repo` | Open PR on `chapel-lang/mason-registry` |
 
 ### Variables
@@ -58,7 +63,7 @@ declared in the workflow (already done) will satisfy it on a per-job basis.
    - push a branch to `<REGISTRY_FORK_OWNER>/mason-registry`
    - open a PR on `chapel-lang/mason-registry`
 
-4. Review and merge the `mason-registry` PR.
+4. Get the `mason-registry` PR reviewed and merged by a registry maintainer.
 
 5. Review and merge the `Bump version for next release` PR opened by `bump-minor-version.yml`.
 

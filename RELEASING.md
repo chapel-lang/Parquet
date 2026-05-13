@@ -29,8 +29,8 @@ The PATs stored in these secrets must be created by the user identified by
 ### Repository default token permissions
 
 `chapel-lang/Parquet` → Settings → Actions → General → Workflow permissions must
-be set to **"Read and write permissions"**, _or_ the `contents: write` permission
-declared in the workflow (already done) will satisfy it on a per-job basis.
+be set to **"Read and write permissions"**. The workflows rely on `GITHUB_TOKEN`
+to create tags and push branches, so the default token needs write access.
 
 ### Creating the PATs
 

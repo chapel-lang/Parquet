@@ -32,6 +32,8 @@ On MacOS, you can install them with Homebrew:
 brew install apache-arrow
 ```
 
+See https://arrow.apache.org/install/ for more options and details.
+
 If you do not install the libraries through a package manager (like above or with something like `spack`), you will need to set the `PKG_CONFIG_PATH` environment variable to point to the directory containing the `.pc` files for Arrow and Parquet. For example:
 
 ```bash

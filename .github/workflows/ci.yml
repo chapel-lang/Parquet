@@ -42,10 +42,14 @@ jobs:
           mason build
       - name: Check the examples build and run
         run: |
-          mason build --example
-          for example in $(ls example/*.chpl); do
-            mason run --example $(basename $example);
-          done
+          if ls example/*.chpl >/dev/null 2>&1; then
+            mason build --example
+            for example in example/*.chpl; do
+              mason run --example $(basename $example);
+            done
+          else
+            echo "No examples found, skipping."
+          fi
       - name: Run mason tests
         run: |
           mason test --show --parallel
@@ -69,10 +73,14 @@ jobs:
       - name: Check the examples build and run
         run: |
           . ./arrow.sh
-          mason build --example
-          for example in $(ls example/*.chpl); do
-            mason run --example $(basename $example);
-          done
+          if ls example/*.chpl >/dev/null 2>&1; then
+            mason build --example
+            for example in example/*.chpl; do
+              mason run --example $(basename $example);
+            done
+          else
+            echo "No examples found, skipping."
+          fi
       - name: Run mason tests
         run: |
           . ./arrow.sh

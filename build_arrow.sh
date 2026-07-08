@@ -46,6 +46,7 @@ echo "Building Apache Arrow $ARROW_VERSION"
   cmake -S $ARROW_DIR/arrow-src/cpp -B $ARROW_BUILD_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DCMAKE_INSTALL_PREFIX=$ARROW_INSTALL_DIR \
+    -DCMAKE_INSTALL_LIBDIR=$ARROW_INSTALL_DIR/lib \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=$chpl_cc \
     -DCMAKE_C_FLAGS="$chpl_cc_flags" \

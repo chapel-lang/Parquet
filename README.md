@@ -32,7 +32,7 @@ following (checked in order):
 Add Parquet as a Mason dependency:
 
 ```bash
-mason add Parquet@0.1.2
+mason add Parquet@0.2.0
 ```
 
 ## Usage

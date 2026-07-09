@@ -1114,6 +1114,29 @@ module Parquet {
     }
   }
 
+  /*
+     Returns the intersection of two 1-D domains. Chapel domain slicing already
+     computes the intersection for rectangular domains, so this is just a named
+     wrapper around `d1[d2]`.
+  */
+  private proc domain_intersection(d1: domain(1), d2: domain(1)) {
+    return d1[d2];
+  }
+
+  /*
+     Given an array of per-file lengths, returns the contiguous index subdomain
+     that each file occupies within the concatenated value space.
+  */
+  private proc getSubdomains(lengths: [?FD] int) {
+    var subdoms: [FD] domain(1);
+    var offset = 0;
+    for i in FD {
+      subdoms[i] = {offset..#lengths[i]};
+      offset += lengths[i];
+    }
+    return subdoms;
+  }
+
   private proc processParquetFilenames(filenames: [] string,
                                        matchingFilenames: [] string,
                                        mode: int) throws {

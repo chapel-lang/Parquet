@@ -130,9 +130,9 @@ proc testWriteStrListColumn(test: borrowed Test) throws {
   segments = [0, 2, 3];
   offsets = [0, 2, 5];
   // "a\0" "bb\0" "ccc\0"
-  vals[0] = 97; vals[1] = 0;
-  vals[2] = 98; vals[3] = 98; vals[4] = 0;
-  vals[5] = 99; vals[6] = 99; vals[7] = 99; vals[8] = 0;
+  vals[0] = "a".toByte(); vals[1] = 0;
+  vals[2] = "b".toByte(); vals[3] = "b".toByte(); vals[4] = 0;
+  vals[5] = "c".toByte(); vals[6] = "c".toByte(); vals[7] = "c".toByte(); vals[8] = 0;
 
   manage new tempDir() as temp {
     const filePath = Path.joinPath(temp.path, "strlist.parquet");

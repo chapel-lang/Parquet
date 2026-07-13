@@ -946,7 +946,7 @@ module Parquet {
   /*
      Backing store for a single locale's zero-based segment offsets of a
      SegArray column registered with `pqWriteOp`. The offsets must outlive the
-     `registerSegArrayColumn` call (they are handed to the C++ writer as a raw
+     `registerListColumn` call (they are handed to the C++ writer as a raw
      pointer at `write()` time), so they are kept alive in a per-locale list on
      the owning `pqWriteOp`.
   */

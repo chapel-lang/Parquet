@@ -935,10 +935,12 @@ module Parquet {
     var c_colName: c_ptrConst(c_char);
     var c_data: c_ptrConst(void);
     var c_offsets: c_ptrConst(void);
+    var c_byteOffsets: c_ptrConst(void);
     var c_type: int;
     var objType: int;
     var size: int;
     var numValues: int;
+    var numBytes: int;
   }
 
   /*
@@ -983,10 +985,12 @@ module Parquet {
               new pqWriteLocalChunkInfo(colName.localize().c_str(),
                                         ptr,
                                         nil,
+                                        nil,
                                         chplTypeToCType(eltType),
                                         PDARRAY_OBJ,
                                         localSubDom.size,
-                                        localSubDom.size));
+                                        localSubDom.size,
+                                        0));
         }
       }
 
@@ -994,22 +998,22 @@ module Parquet {
     }
 
     /*
-       Register a numeric SegArray (list) column to be written alongside flat
+       Register a numeric list (SegArray) column to be written alongside other
        columns into the same Parquet file. `segments` holds one starting index
        per list into `values`, and `values` holds the concatenated list
        elements. The list column is written as a nested Arrow LIST column,
-       matching the layout produced by `writeListColumn` and the Arkouda
-       multi-column writer. Supported value types are int(64), uint(64), real,
-       and bool; string SegArrays are handled by `writeStrListColumn`.
+       matching the layout produced by `writeListColumn`. Supported value types
+       are int(64), uint(64), real, and bool; string lists use
+       `registerStrListColumn`.
     */
-    proc ref registerSegArrayColumn(const segments: [] int,
-                                    const values: [] ?eltType,
-                                    colName: string) {
+    proc ref registerListColumn(const segments: [] int,
+                                const values: [] ?eltType,
+                                colName: string) {
       if eltType != int(64) && eltType != uint(64) &&
          eltType != real && eltType != bool then
-        compilerError("registerSegArrayColumn supports int(64), uint(64), " +
-                      "real, and bool value types (string SegArrays use " +
-                      "writeStrListColumn); got ", eltType:string);
+        compilerError("registerListColumn supports int(64), uint(64), real, " +
+                      "and bool value types; got ", eltType:string,
+                      ".");
 
       const c_dtype = chplTypeToCType(eltType);
 
@@ -1039,10 +1043,89 @@ module Parquet {
               new pqWriteLocalChunkInfo(colName.localize().c_str(),
                                         valPtr,
                                         segPtr,
+                                        nil,
                                         c_dtype,
                                         SEGARRAY_OBJ,
                                         segDom.size,
-                                        valDom.size));
+                                        valDom.size,
+                                        0));
+        }
+      }
+
+      colCount += 1;
+    }
+
+    /*
+       Register a list-of-strings (SegArray of strings) column to be written
+       alongside other columns into the same Parquet file. `segments` holds one
+       starting index per list into `offsets`; `offsets` holds one starting
+       byte index per string into `values`; and `values` holds the raw,
+       null-terminated string bytes -- the same layout accepted by
+       `writeStrListColumn`. The column is written as a nested Arrow LIST of
+       strings.
+    */
+    proc ref registerStrListColumn(const segments: [] int,
+                                   const offsets: [] int,
+                                   const ref values: [] uint(8),
+                                   colName: string) {
+      coforall (loc, localInfo, localBufs) in
+          zip(sharedDom.targetLocales(), info, segBuffers) {
+        on loc {
+          const ref segDom = segments.localSubdomain();
+          const ref valDom = values.localSubdomain();
+
+          // First and one-past-last string indices owned by this locale.
+          const strStartIdx = if segDom.size > 0 then segments[segDom.low]
+                                                 else 0;
+          const strEndIdx = if segDom.size == 0 then 0
+                            else if segDom.high == segments.domain.high
+                              then offsets.size
+                              else segments[segDom.high + 1];
+          const numStrings = strEndIdx - strStartIdx;
+
+          // Rebase segment offsets to index from 0 into this locale's strings.
+          var segBuf = new shared segOffsetBuffer({0..#segDom.size});
+          for j in 0..#segDom.size do
+            segBuf.data[j] = segments[segDom.low + j] - strStartIdx;
+          localBufs.pushBack(segBuf);
+
+          // First and one-past-last byte indices owned by this locale.
+          const byteStartIdx = if numStrings > 0 then offsets[strStartIdx]
+                                                 else 0;
+          const byteEndIdx = if numStrings == 0 then 0
+                             else if strEndIdx == offsets.size
+                               then values.size
+                               else offsets[strEndIdx];
+          const numByteVals = byteEndIdx - byteStartIdx;
+
+          // Rebase byte offsets to index from 0 into this locale's bytes.
+          var byteBuf = new shared segOffsetBuffer({0..#numStrings});
+          for k in 0..#numStrings do
+            byteBuf.data[k] = offsets[strStartIdx + k] - byteStartIdx;
+          localBufs.pushBack(byteBuf);
+
+          var segPtr: c_ptrConst(void) = nil;
+          if segDom.size > 0 then
+            segPtr = c_ptrToConst(segBuf.data[0]): c_ptrConst(void);
+
+          var byteOffPtr: c_ptrConst(void) = nil;
+          if numStrings > 0 then
+            byteOffPtr = c_ptrToConst(byteBuf.data[0]): c_ptrConst(void);
+
+          var valPtr: c_ptrConst(void) = nil;
+          if numByteVals > 0 then
+            valPtr = c_pointer_return_const(values[valDom.first]): c_ptrConst(void);
+
+          localInfo.pushBack(
+              new pqWriteLocalChunkInfo(colName.localize().c_str(),
+                                        valPtr,
+                                        segPtr,
+                                        byteOffPtr,
+                                        ARROWSTRING,
+                                        SEGARRAY_OBJ,
+                                        segDom.size,
+                                        numStrings,
+                                        numByteVals));
         }
       }
 
@@ -1066,20 +1149,24 @@ module Parquet {
           var c_colNames: [colDom] c_ptrConst(c_char);
           var c_datas: [colDom] c_ptrConst(void);
           var c_offsets: [colDom] c_ptrConst(void);
+          var c_byteOffsets: [colDom] c_ptrConst(void);
           var c_types: [colDom] int;
           var c_objTypes: [colDom] int;
           var c_numValues: [colDom] int;
+          var c_numBytes: [colDom] int;
           var sizes: [colDom] int;
 
-          for (colInfo,   c_colName,  c_data,  c_offset,  c_type,  c_objType,  c_numValue,  size) in
-           zip(localInfo, c_colNames, c_datas, c_offsets, c_types, c_objTypes, c_numValues, sizes) {
+          for (colInfo,   c_colName,  c_data,  c_offset,  c_byteOffset,  c_type,  c_objType,  c_numValue,  c_numByte,  size) in
+           zip(localInfo, c_colNames, c_datas, c_offsets, c_byteOffsets, c_types, c_objTypes, c_numValues, c_numBytes, sizes) {
 
              c_colName = colInfo.c_colName;
              c_data = colInfo.c_data;
              c_offset = colInfo.c_offsets;
+             c_byteOffset = colInfo.c_byteOffsets;
              c_type = colInfo.c_type;
              c_objType = colInfo.objType;
              c_numValue = colInfo.numValues;
+             c_numByte = colInfo.numBytes;
              size = colInfo.size;
           }
 
@@ -1102,10 +1189,43 @@ module Parquet {
             const batchSize = min(numLeft-i, ROWGROUPS);
 
             var rg_writer = writer.AppendRowGroup();
-            for (data, offset, kind, objType, numVals, colRows) in
-                zip(c_datas, c_offsets, c_types, c_objTypes, c_numValues,
-                    sizes) {
-              if objType == SEGARRAY_OBJ {
+            for (data, offset, byteOffset, kind, objType, numVals, numByte,
+                 colRows) in
+                zip(c_datas, c_offsets, c_byteOffsets, c_types, c_objTypes,
+                    c_numValues, c_numBytes, sizes) {
+              if objType == SEGARRAY_OBJ && kind == ARROWSTRING {
+                // Nested LIST-of-strings column. Each list's strings use
+                // def_lvl=3, with rep_lvl=0 for the first string and rep_lvl=1
+                // for the rest. Empty lists are a single null (def_lvl=1).
+                // String lengths exclude the trailing null terminator.
+                var col_writer = rg_writer.NextColumn();
+                const segOffs = offset: c_ptrConst(int);
+                const byteOffs = byteOffset: c_ptrConst(int);
+                const valBytes = data: c_ptrConst(uint(8));
+                for r in i..#batchSize {
+                  const strStart = segOffs[r];
+                  const strEnd = if r == colRows - 1 then numVals
+                                                     else segOffs[r+1];
+                  if strEnd - strStart > 0 {
+                    for k in strStart..strEnd-1 {
+                      const bStart = byteOffs[k];
+                      const bEnd = if k == numVals - 1 then numByte
+                                                       else byteOffs[k+1];
+                      const slen = bEnd - bStart - 1;  // drop null terminator
+                      var defLvl: int(16) = 3;
+                      var repLvl: int(16) = (k != strStart): int(16);
+                      const cstr = (valBytes + bStart): c_ptrConst(uint(8));
+                      col_writer.WriteString(slen, cstr, c_ptrTo(defLvl),
+                                             c_ptrTo(repLvl));
+                    }
+                  } else {
+                    var defLvl: int(16) = 1;
+                    var repLvl: int(16) = 0;
+                    col_writer.WriteString(0, nil, c_ptrTo(defLvl),
+                                           c_ptrTo(repLvl));
+                  }
+                }
+              } else if objType == SEGARRAY_OBJ {
                 // Nested LIST column: write one list (segment) at a time using
                 // Arrow definition/repetition levels. def_lvl=3 marks a defined
                 // item; rep_lvl=0 starts a new list and rep_lvl=1 continues it.

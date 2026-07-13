@@ -66,14 +66,14 @@ proc testMultiColWriteRead(test: borrowed Test) throws {
 }
 
 // Multi-column single-file write mixing a flat pdarray column with a numeric
-// SegArray (list) column, then reading both back. Exercises the SEGARRAY path
-// of pqWriteOp/registerSegArrayColumn added for mixed/complex-type writes.
-proc testMultiColWithSegArray(test: borrowed Test) throws {
+// list (SegArray) column, then reading both back. Exercises the SEGARRAY path
+// of pqWriteOp/registerListColumn added for mixed/complex-type writes.
+proc testMultiColWithListColumn(test: borrowed Test) throws {
   // flat column
   var flat = blockDist.createArray(0..#3, int);
   flat = [10, 20, 30];
 
-  // segarray column: [[0, 1, 2], [3], [4, 5]]
+  // list column: [[0, 1, 2], [3], [4, 5]]
   var segments = blockDist.createArray(0..#3, int);
   var values = blockDist.createArray(0..#6, int);
   segments = [0, 3, 4];
@@ -84,7 +84,7 @@ proc testMultiColWithSegArray(test: borrowed Test) throws {
 
     var op = new pqWriteOp(filePath, flat.domain);
     op.registerColumn(flat, "flat");
-    op.registerSegArrayColumn(segments, values, "lists");
+    op.registerListColumn(segments, values, "lists");
     op.write();
 
     test.assertTrue(FS.isFile(filePath));
@@ -117,9 +117,9 @@ proc testMultiColWithSegArray(test: borrowed Test) throws {
   }
 }
 
-// Numeric SegArray column containing empty lists, mixed with a flat column, in
+// Numeric list column containing empty lists, mixed with a flat column, in
 // a single multi-column file: [[], [0, 1], [], [3, 4, 5, 6], []]
-proc testMultiColSegArrayEmptySegments(test: borrowed Test) throws {
+proc testMultiColListEmptySegments(test: borrowed Test) throws {
   var flat = blockDist.createArray(0..#5, real);
   flat = [1.0, 2.0, 3.0, 4.0, 5.0];
 
@@ -132,7 +132,7 @@ proc testMultiColSegArrayEmptySegments(test: borrowed Test) throws {
     const filePath = Path.joinPath(temp.path, "multiseg_empty.parquet");
 
     var op = new pqWriteOp(filePath, flat.domain);
-    op.registerSegArrayColumn(segments, values, "lists");
+    op.registerListColumn(segments, values, "lists");
     op.registerColumn(flat, "flat");
     op.write();
 
@@ -148,6 +148,53 @@ proc testMultiColSegArrayEmptySegments(test: borrowed Test) throws {
     var flatIn: [0..#5] real;
     readColumn(filePath, "flat", flatIn);
     for i in 0..#5 do test.assertEqual(flatIn[i], flat[i]);
+  }
+}
+
+// Multi-column single-file write mixing a flat pdarray column with a
+// list-of-strings (SegArray of strings) column: [["a", "bb"], ["ccc"], []].
+// Exercises the SEGARRAY + ARROWSTRING path of registerStrListColumn,
+// including an empty list.
+proc testMultiColWithStrListColumn(test: borrowed Test) throws {
+  var flat = blockDist.createArray(0..#3, int);
+  flat = [7, 8, 9];
+
+  var segments = blockDist.createArray(0..#3, int);   // per-list start string
+  var offsets = blockDist.createArray(0..#3, int);    // per-string start byte
+  var vals = blockDist.createArray(0..#9, uint(8));   // null-terminated bytes
+  segments = [0, 2, 3];
+  offsets = [0, 2, 5];
+  // "a\0" "bb\0" "ccc\0"
+  vals[0] = "a".toByte(); vals[1] = 0;
+  vals[2] = "b".toByte(); vals[3] = "b".toByte(); vals[4] = 0;
+  vals[5] = "c".toByte(); vals[6] = "c".toByte(); vals[7] = "c".toByte();
+  vals[8] = 0;
+
+  manage new tempDir() as temp {
+    const filePath = Path.joinPath(temp.path, "multistrlist.parquet");
+
+    var op = new pqWriteOp(filePath, flat.domain);
+    op.registerColumn(flat, "flat");
+    op.registerStrListColumn(segments, offsets, vals, "strlists");
+    op.write();
+
+    test.assertEqual(getNumCols(filePath), 2);
+    test.assertEqual(getArrType(filePath, "flat"), ArrowTypes.int64);
+    test.assertEqual(getArrType(filePath, "strlists"), ArrowTypes.list);
+    test.assertEqual(getListData(filePath, "strlists"), ArrowTypes.stringArr);
+
+    // flat column round-trips
+    var flatIn: [0..#3] int;
+    readColumn(filePath, "flat", flatIn);
+    for i in 0..#3 do test.assertEqual(flatIn[i], flat[i]);
+
+    // string list structure: 3 strings total, list sizes [2, 1, 0]
+    var segSizes: [0..#3] int;
+    const total = getListColSize(filePath, "strlists", segSizes);
+    test.assertEqual(total, 3);
+    test.assertEqual(segSizes[0], 2);
+    test.assertEqual(segSizes[1], 1);
+    test.assertEqual(segSizes[2], 0);
   }
 }
 

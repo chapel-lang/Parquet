@@ -466,6 +466,42 @@ module Parquet {
     return typeFromCType(call.retVal);
   }
 
+  /*
+     Decimal columns in Parquet have a fixed byte length determined by their
+     precision, but Parquet/Arrow doesn't expose that byte length directly.
+     Since the byte length is constant for each precision value, we use a lookup
+     table that maps the precision to the byte length.
+  */
+  proc getByteLength(filename: string, colname: string) throws {
+    extern proc c_getPrecision(filename, colname, errMsg): int(32);
+
+    var call = new parquetCall(getL(), getR(), getM());
+    manage call {
+      call.retVal = c_getPrecision(filename.localize().c_str(),
+                                   colname.localize().c_str(),
+                                   call.errMsg);
+    }
+    if call.err then throw call.err;
+
+    const precision = call.retVal;
+    if precision < 3 then return 1;
+    else if precision < 5 then return 2;
+    else if precision < 7 then return 3;
+    else if precision < 10 then return 4;
+    else if precision < 12 then return 5;
+    else if precision < 15 then return 6;
+    else if precision < 17 then return 7;
+    else if precision < 19 then return 8;
+    else if precision < 22 then return 9;
+    else if precision < 24 then return 10;
+    else if precision < 27 then return 11;
+    else if precision < 29 then return 12;
+    else if precision < 32 then return 13;
+    else if precision < 34 then return 14;
+    else if precision < 36 then return 15;
+    return 16;
+  }
+
   proc writeDistArrayToParquet(A, filename, dsetname, rowGroupSize,
                                compression, mode) throws {
     extern proc c_writeColumnToParquet(filename, arr_chpl, colnum,

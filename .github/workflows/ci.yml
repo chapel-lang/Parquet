@@ -81,11 +81,6 @@ jobs:
       cache-path: ${{ steps.key.outputs.cache-path }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Chapel
-        uses: jabraham17/setup-chpl@v1
-        with:
-          # version: latest
-          version: 2.9.0 # pin to 2.9 for now
       - name: Determine Arrow cache key
         id: key
         run: |
@@ -104,6 +99,12 @@ jobs:
         with:
           path: ${{ steps.key.outputs.cache-path }}
           key: ${{ steps.key.outputs.cache-key }}
+      - name: Setup Chapel
+        if: steps.cache-arrow.outputs.cache-hit != 'true'
+        uses: jabraham17/setup-chpl@v1
+        with:
+          # version: latest
+          version: 2.9.0 # pin to 2.9 for now
       - name: Build arrow/parquet dependencies (retrying)
         if: steps.cache-arrow.outputs.cache-hit != 'true'
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0

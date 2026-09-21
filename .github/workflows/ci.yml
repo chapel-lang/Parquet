@@ -49,16 +49,54 @@ jobs:
       - name: Run mason tests
         run: |
           mason test --show --parallel
+  source-matrix:
+    runs-on: ubuntu-slim
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        shell: python
+        run: |
+          import json, os
+          versions = ["2.8.0", "2.9.0", "latest"]
+          comms = ["none", "gasnet-udp"]
+          include = []
+          for version in versions:
+              # (backend, asan); clang backend and ASAN are only tested with latest
+              configs = [("llvm", "false")]
+              if version == "latest":
+                  configs += [("clang", "false"), ("clang", "true")]
+              for comm in comms:
+                  for backend, asan in configs:
+                      include.append({"version": version, "comm": comm,
+                                      "backend": backend, "asan": asan})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("matrix=" + json.dumps({"include": include}) + "\n")
   tests-from-source:
+    needs: source-matrix
     strategy:
       fail-fast: false
-      matrix:
-        version: [2.8.0, latest]
+      matrix: ${{ fromJSON(needs.source-matrix.outputs.matrix) }}
     runs-on: ubuntu-latest
-    container:
-      image: chapel/chapel:${{ matrix.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Chapel
+        uses: jabraham17/setup-chpl@v1
+        with:
+          version: ${{ matrix.version }}
+          comm: ${{ matrix.comm }}
+          backend: ${{ matrix.backend }}
+      - name: Enable ASAN
+        if: ${{ matrix.asan == 'true' }}
+        run: |
+          echo "CHPL_TASKS=fifo" >> $GITHUB_ENV
+          echo "CHPL_TARGET_MEM=cstdlib" >> $GITHUB_ENV
+          echo "CHPL_SANITIZE_EXE=address" >> $GITHUB_ENV
+
+          echo "ASAN_OPTIONS=use_sigaltstack=0,detect_leaks=0" >> $GITHUB_ENV
+          echo "GASNET_SPAWNFN=L" >> $GITHUB_ENV
+          echo "CHPL_RT_MASTERIP=127.0.0.1" >> $GITHUB_ENV
+          echo "GASNET_ROUTE_OUTPUT=0" >> $GITHUB_ENV
       - name: Determine Arrow version
         run: |
           ARROW_VERSION=$(sed -nE 's/^ARROW_VERSION=\$\{ARROW_VERSION:-"([^"]+)"\}/\1/p' build_arrow.sh)
@@ -101,3 +139,8 @@ jobs:
         run: |
           . ./arrow.sh
           mason test --show --parallel
+      - name: Run multilocale tests
+        if: ${{ matrix.comm != 'none' }}
+        run: |
+          . ./arrow.sh
+          PARQUET_TEST_NUM_LOCALES=4 mason test --show

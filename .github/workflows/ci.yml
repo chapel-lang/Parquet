@@ -171,9 +171,11 @@ jobs:
             echo "No examples found, skipping."
           fi
       - name: Run mason tests
+        env:
+          PARALLEL: ${{ matrix.comm == 'none' && '--parallel' || '' }}
         run: |
           . ./arrow.sh
-          mason test --show --parallel
+          mason test --show $PARALLEL
       - name: Run multilocale tests
         if: ${{ matrix.comm != 'none' }}
         run: |

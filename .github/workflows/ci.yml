@@ -74,8 +74,42 @@ jobs:
                                       "backend": backend, "asan": asan})
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write("matrix=" + json.dumps({"include": include}) + "\n")
+  build-arrow:
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.key.outputs.cache-key }}
+      cache-path: ${{ steps.key.outputs.cache-path }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine Arrow cache key
+        id: key
+        run: |
+          ARROW_VERSION=$(sed -nE 's/^ARROW_VERSION=\$\{ARROW_VERSION:-"([^"]+)"\}/\1/p' build_arrow.sh)
+          ARROW_SCRIPT_SHA=$(sha256sum build_arrow.sh | cut -d' ' -f1)
+          echo "cache-key=arrow-${ARROW_VERSION}-${ARROW_SCRIPT_SHA}" >> $GITHUB_OUTPUT
+          {
+            echo "cache-path<<EOF"
+            echo "deps/arrow-${ARROW_VERSION}"
+            echo "arrow.sh"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+      - name: cache Arrow install
+        id: cache-arrow
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #v6.1.0
+        with:
+          path: ${{ steps.key.outputs.cache-path }}
+          key: ${{ steps.key.outputs.cache-key }}
+      - name: Build arrow/parquet dependencies (retrying)
+        if: steps.cache-arrow.outputs.cache-hit != 'true'
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 3
+          timeout_seconds: 1200
+          retry_wait_seconds: 60
+          command: |
+            NUM_CORES=$(nproc) ./build_arrow.sh
   tests-from-source:
-    needs: source-matrix
+    needs: [source-matrix, build-arrow]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.source-matrix.outputs.matrix) }}
@@ -100,29 +134,13 @@ jobs:
           echo "GASNET_SPAWNFN=L" >> $GITHUB_ENV
           echo "CHPL_RT_MASTERIP=127.0.0.1" >> $GITHUB_ENV
           echo "GASNET_ROUTE_OUTPUT=0" >> $GITHUB_ENV
-      - name: Determine Arrow version
-        run: |
-          ARROW_VERSION=$(sed -nE 's/^ARROW_VERSION=\$\{ARROW_VERSION:-"([^"]+)"\}/\1/p' build_arrow.sh)
-          echo "ARROW_VERSION=${ARROW_VERSION}" >> $GITHUB_ENV
-          ARROW_SCRIPT_SHA=$(sha256sum build_arrow.sh | cut -d' ' -f1)
-          echo "ARROW_SCRIPT_SHA=${ARROW_SCRIPT_SHA}" >> $GITHUB_ENV
-      - name: cache Arrow install
-        id: cache-arrow
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #v6.1.0
+      - name: Restore Arrow install from cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #v6.1.0
         with:
-          path: |
-            deps/arrow-${{ env.ARROW_VERSION }}
-            arrow.sh
-          key: arrow-${{ env.ARROW_VERSION }}-${{ env.ARROW_SCRIPT_SHA }}
-      - name: Build arrow/parquet dependencies (retrying)
-        if: steps.cache-arrow.outputs.cache-hit != 'true'
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          max_attempts: 3
-          timeout_seconds: 1200
-          retry_wait_seconds: 60
-          command: |
-            NUM_CORES=$(nproc) ./build_arrow.sh
+          path: ${{ needs.build-arrow.outputs.cache-path }}
+          key: ${{ needs.build-arrow.outputs.cache-key }}
+          fail-on-cache-miss: true
+          lookup-only: true
       - name: Check the project builds
         run: |
           . ./arrow.sh

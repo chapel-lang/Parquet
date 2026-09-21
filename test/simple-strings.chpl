@@ -11,6 +11,7 @@ import BlockDist.blockDist;
 config const n = 100;
 
 proc testWriteRead(test: borrowed Test) throws {
+  requireTestLocales(test);
   var Arr1, Arr2, Arr3: [1..10] int;
   Arr1 = 1;
   Arr2 = 2;

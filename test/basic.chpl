@@ -11,6 +11,7 @@ import BlockDist.blockDist;
 config const n = 100;
 
 proc testVersionInfo(test: borrowed Test) throws {
+  requireTestLocales(test);
   const version = getVersionInfo();
   test.assertEqual(version.count("."), 2);
   for component in version.split(".") do
@@ -18,6 +19,7 @@ proc testVersionInfo(test: borrowed Test) throws {
 }
 
 proc testMultiColWriteRead(test: borrowed Test) throws {
+  requireTestLocales(test);
   var Arr1, Arr2, Arr3: [1..10] int;
   Arr1 = 1;
   Arr2 = 2;
@@ -72,6 +74,7 @@ proc testMultiColWriteRead(test: borrowed Test) throws {
 }
 
 proc testMultiColEmptyStringIsNotNull(test: borrowed Test) throws {
+  requireTestLocales(test);
   var ints = blockDist.createArray(0..#3, int);
   var offsets = blockDist.createArray(0..#3, int);
   var values = blockDist.createArray(0..#6, uint(8));
@@ -80,18 +83,25 @@ proc testMultiColEmptyStringIsNotNull(test: borrowed Test) throws {
   values = ["a".toByte(), 0:uint(8), 0:uint(8),
             "b".toByte(), "b".toByte(), 0:uint(8)];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "emptyString.parquet");
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    var op = new pqWriteOp(filePath, ints.domain);
-    op.registerColumn(ints, "ints");
-    op.registerStrColumn(offsets, values, "strings");
-    op.write();
+  const filePath = Path.joinPath(temp.path, "emptyString.parquet");
 
-    var nullIndices: [0..#3] int;
-    getNullIndices(nullIndices, [filePath], [3], "strings",
+  var op = new pqWriteOp(filePath, ints.domain);
+  op.registerColumn(ints, "ints");
+  op.registerStrColumn(offsets, values, "strings");
+  op.write();
+
+  for (f, locDom) in localeChunks(ints, filePath, singleFileIfOneLocale=true) {
+    if locDom.size == 0 then continue;
+    var nullIndices: [0..#locDom.size] int;
+    getNullIndices(nullIndices, [f], [locDom.size], "strings",
                    ArrowTypes.stringArr);
-    test.assertEqual(nullIndices, [0, 0, 0]);
+    test.assertEqual(+ reduce nullIndices, 0);
   }
 }
 
@@ -99,6 +109,7 @@ proc testMultiColEmptyStringIsNotNull(test: borrowed Test) throws {
 // list (SegArray) column, then reading both back. Exercises the SEGARRAY path
 // of pqWriteOp/registerListColumn added for mixed/complex-type writes.
 proc testMultiColWithListColumn(test: borrowed Test) throws {
+  requireTestLocales(test);
   // flat column
   var flat = blockDist.createArray(0..#3, int);
   flat = [10, 20, 30];
@@ -109,47 +120,63 @@ proc testMultiColWithListColumn(test: borrowed Test) throws {
   segments = [0, 3, 4];
   values = [0, 1, 2, 3, 4, 5];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "multiseg.parquet");
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    var op = new pqWriteOp(filePath, flat.domain);
-    op.registerColumn(flat, "flat");
-    op.registerListColumn(segments, values, "lists");
-    op.write();
+  const filePath = Path.joinPath(temp.path, "multiseg.parquet");
 
-    test.assertTrue(FS.isFile(filePath));
-    test.assertEqual(getNumCols(filePath), 2);
-    test.assertEqual(getArrType(filePath, "flat"), ArrowTypes.int64);
-    test.assertEqual(getArrType(filePath, "lists"), ArrowTypes.list);
-    test.assertEqual(getListData(filePath, "lists"), ArrowTypes.int64);
+  var op = new pqWriteOp(filePath, flat.domain);
+  op.registerColumn(flat, "flat");
+  op.registerListColumn(segments, values, "lists");
+  op.write();
+
+  const expectedSizes = [3, 1, 2];
+  const numLocs = flat.targetLocales().size;
+  var files: [0..#numLocs] string;
+  var rowsPerFile, valsPerFile: [0..#numLocs] int;
+
+  for ((f, locDom), idx) in
+      zip(localeChunks(flat, filePath, singleFileIfOneLocale=true),
+          0..#numLocs) {
+    files[idx] = f;
+    rowsPerFile[idx] = locDom.size;
+    valsPerFile[idx] = + reduce expectedSizes[locDom];
+
+    test.assertTrue(FS.isFile(f));
+    test.assertEqual(getNumCols(f), 2);
+    test.assertEqual(getArrSize(f), locDom.size);
+    if locDom.size == 0 then continue;
+
+    test.assertEqual(getArrType(f, "flat"), ArrowTypes.int64);
+    test.assertEqual(getArrType(f, "lists"), ArrowTypes.list);
+    test.assertEqual(getListData(f, "lists"), ArrowTypes.int64);
 
     // flat column round-trips
-    var flatIn: [0..#3] int;
-    readColumn(filePath, "flat", flatIn);
-    for i in 0..#3 do test.assertEqual(flatIn[i], flat[i]);
+    var flatIn: [0..#locDom.size] int;
+    readColumn(f, "flat", flatIn);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(flatIn[i], flat[r]);
 
     // list column structure
-    var segSizes: [0..#3] int;
-    const total = getListColSize(filePath, "lists", segSizes);
-    test.assertEqual(total, 6);
-    test.assertEqual(segSizes[0], 3);
-    test.assertEqual(segSizes[1], 1);
-    test.assertEqual(segSizes[2], 2);
-
-    // list column values round-trip
-    var vals: [0..#6] int;
-    var rowsPerFile = [3];
-    var rSeg: [0..#3] int;
-    var rOff: [0..#3] int;
-    readListFilesByName(vals, rowsPerFile, rSeg, rOff, [filePath], [6],
-                        "lists", ArrowTypes.int64);
-    for i in 0..#6 do test.assertEqual(vals[i], values[i]);
+    var segSizes: [0..#locDom.size] int;
+    test.assertEqual(getListColSize(f, "lists", segSizes), valsPerFile[idx]);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(segSizes[i], expectedSizes[r]);
   }
+
+  // list column values round-trip across all files
+  const vals = readListValues(int, files, rowsPerFile, valsPerFile, "lists",
+                              ArrowTypes.int64);
+  for i in 0..#6 do test.assertEqual(vals[i], values[i]);
 }
 
 // Numeric list column containing empty lists, mixed with a flat column, in
 // a single multi-column file: [[], [0, 1], [], [3, 4, 5, 6], []]
 proc testMultiColListEmptySegments(test: borrowed Test) throws {
+  requireTestLocales(test);
   var flat = blockDist.createArray(0..#5, real);
   flat = [1.0, 2.0, 3.0, 4.0, 5.0];
 
@@ -158,26 +185,37 @@ proc testMultiColListEmptySegments(test: borrowed Test) throws {
   segments = [0, 0, 2, 2, 6];
   values = [0, 1, 3, 4, 5, 6];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "multiseg_empty.parquet");
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    var op = new pqWriteOp(filePath, flat.domain);
-    op.registerListColumn(segments, values, "lists");
-    op.registerColumn(flat, "flat");
-    op.write();
+  const filePath = Path.joinPath(temp.path, "multiseg_empty.parquet");
 
-    test.assertEqual(getNumCols(filePath), 2);
-    test.assertEqual(getArrType(filePath, "lists"), ArrowTypes.list);
+  var op = new pqWriteOp(filePath, flat.domain);
+  op.registerListColumn(segments, values, "lists");
+  op.registerColumn(flat, "flat");
+  op.write();
 
-    var segSizes: [0..#5] int;
-    const total = getListColSize(filePath, "lists", segSizes);
-    test.assertEqual(total, 6);
-    const expected = [0, 2, 0, 4, 0];
-    for i in 0..#5 do test.assertEqual(segSizes[i], expected[i]);
+  const expected = [0, 2, 0, 4, 0];
+  for (f, locDom) in localeChunks(flat, filePath, singleFileIfOneLocale=true) {
+    test.assertEqual(getNumCols(f), 2);
+    test.assertEqual(getArrSize(f), locDom.size);
+    if locDom.size == 0 then continue;
 
-    var flatIn: [0..#5] real;
-    readColumn(filePath, "flat", flatIn);
-    for i in 0..#5 do test.assertEqual(flatIn[i], flat[i]);
+    test.assertEqual(getArrType(f, "lists"), ArrowTypes.list);
+
+    var segSizes: [0..#locDom.size] int;
+    test.assertEqual(getListColSize(f, "lists", segSizes),
+                     + reduce expected[locDom]);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(segSizes[i], expected[r]);
+
+    var flatIn: [0..#locDom.size] real;
+    readColumn(f, "flat", flatIn);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(flatIn[i], flat[r]);
   }
 }
 
@@ -186,6 +224,7 @@ proc testMultiColListEmptySegments(test: borrowed Test) throws {
 // Exercises the SEGARRAY + ARROWSTRING path of registerStrListColumn,
 // including an empty list.
 proc testMultiColWithStrListColumn(test: borrowed Test) throws {
+  requireTestLocales(test);
   var flat = blockDist.createArray(0..#3, int);
   flat = [7, 8, 9];
 
@@ -201,56 +240,77 @@ proc testMultiColWithStrListColumn(test: borrowed Test) throws {
     "c".toByte(), "c".toByte(), "c".toByte(), 0:uint(8)
   ];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "multistrlist.parquet");
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    var op = new pqWriteOp(filePath, flat.domain);
-    op.registerColumn(flat, "flat");
-    op.registerStrListColumn(segments, offsets, vals, "strlists");
-    op.write();
+  const filePath = Path.joinPath(temp.path, "multistrlist.parquet");
 
-    test.assertEqual(getNumCols(filePath), 2);
-    test.assertEqual(getArrType(filePath, "flat"), ArrowTypes.int64);
-    test.assertEqual(getArrType(filePath, "strlists"), ArrowTypes.list);
-    test.assertEqual(getListData(filePath, "strlists"), ArrowTypes.stringArr);
+  var op = new pqWriteOp(filePath, flat.domain);
+  op.registerColumn(flat, "flat");
+  op.registerStrListColumn(segments, offsets, vals, "strlists");
+  op.write();
+
+  // string list sizes [2, 1, 0]
+  const expected = [2, 1, 0];
+  for (f, locDom) in localeChunks(flat, filePath, singleFileIfOneLocale=true) {
+    test.assertEqual(getNumCols(f), 2);
+    test.assertEqual(getArrSize(f), locDom.size);
+    if locDom.size == 0 then continue;
+
+    test.assertEqual(getArrType(f, "flat"), ArrowTypes.int64);
+    test.assertEqual(getArrType(f, "strlists"), ArrowTypes.list);
+    test.assertEqual(getListData(f, "strlists"), ArrowTypes.stringArr);
 
     // flat column round-trips
-    var flatIn: [0..#3] int;
-    readColumn(filePath, "flat", flatIn);
-    for i in 0..#3 do test.assertEqual(flatIn[i], flat[i]);
+    var flatIn: [0..#locDom.size] int;
+    readColumn(f, "flat", flatIn);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(flatIn[i], flat[r]);
 
-    // string list structure: 3 strings total, list sizes [2, 1, 0]
-    var segSizes: [0..#3] int;
-    const total = getListColSize(filePath, "strlists", segSizes);
-    test.assertEqual(total, 3);
-    test.assertEqual(segSizes[0], 2);
-    test.assertEqual(segSizes[1], 1);
-    test.assertEqual(segSizes[2], 0);
+    var segSizes: [0..#locDom.size] int;
+    test.assertEqual(getListColSize(f, "strlists", segSizes),
+                     + reduce expected[locDom]);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(segSizes[i], expected[r]);
   }
 }
 
 proc testDistributedWriteRead(test: borrowed Test) throws {
+  requireTestLocales(test);
   var ArrOut, ArrIn = blockDist.createArray(1..n, int);
   ArrOut = 2;
 
-  manage new tempDir() as temp {
-    const baseName = "testDistributedWriteRead";
-    const filePath = Path.joinPath(temp.path, baseName + ".parquet");
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    write1DDistArrayParquet(filePath, "Arr", CompressionType.NONE, TRUNCATE,
-                            ArrOut);
+  const baseName = "testDistributedWriteRead";
+  const filePath = Path.joinPath(temp.path, baseName + ".parquet");
 
-    const files = FS.glob(Path.joinPath(temp.path,
-                                        baseName + "_LOCALE*.parquet"));
-    test.assertEqual(files.size, 1);
+  write1DDistArrayParquet(filePath, "Arr", CompressionType.NONE, TRUNCATE,
+                          ArrOut);
 
-    readColumn(filename=files[0], colName="Arr", Arr=ArrIn);
+  const files = FS.glob(Path.joinPath(temp.path,
+                                      baseName + "_LOCALE*.parquet"));
+  test.assertEqual(files.size, ArrOut.targetLocales().size);
 
-    test.assertEqual(ArrOut, ArrIn);
+  for (f, locDom) in localeChunks(ArrOut, filePath) {
+    test.assertEqual(getArrSize(f), locDom.size);
+    if locDom.size == 0 then continue;
+    var chunk: [0..#locDom.size] int;
+    readColumn(filename=f, colName="Arr", Arr=chunk);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(chunk[i], ArrOut[r]);
   }
 }
 
 proc testWriteRead(test: borrowed Test) throws {
+  requireTestLocales(test);
   param val = 3;
 
   var ArrOut, ArrIn: [1..n] int;
@@ -276,6 +336,7 @@ proc testWriteRead(test: borrowed Test) throws {
 // caused segfault due to mismatching allocators
 // See https://github.com/chapel-lang/Parquet/issues/8
 proc testDatasets(test: borrowed Test) throws {
+  requireTestLocales(test);
   const Arr: [1..100] int = 42;
   const Arr2: [1..100] int = 43;
 
@@ -294,12 +355,14 @@ proc testDatasets(test: borrowed Test) throws {
 }
 
 proc testNumCols(test: borrowed Test) throws {
+  requireTestLocales(test);
   const filename = "test/resources/multi-col.parquet";
 
   test.assertTrue(getNumCols(filename) == 3);
 }
 
 proc testTypes(test: borrowed Test) throws {
+  requireTestLocales(test);
   const filename = "test/resources/multi-col.parquet";
 
   const types = getAllTypes(filename);
@@ -310,6 +373,7 @@ proc testTypes(test: borrowed Test) throws {
 }
 
 proc testReadColumn(test: borrowed Test) throws {
+  requireTestLocales(test);
   const filename = "test/resources/multi-col.parquet";
 
 }

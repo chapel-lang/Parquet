@@ -132,7 +132,6 @@ jobs:
       - name: Enable ASAN
         if: ${{ matrix.asan == 'true' }}
         run: |
-          echo "CHPL_TASKS=fifo" >> $GITHUB_ENV
           echo "CHPL_TARGET_MEM=cstdlib" >> $GITHUB_ENV
           echo "CHPL_SANITIZE_EXE=address" >> $GITHUB_ENV
 

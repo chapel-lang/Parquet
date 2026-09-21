@@ -1470,7 +1470,11 @@ module Parquet {
                  colRows) in
                 zip(c_datas, c_offsets, c_byteOffsets, c_types, c_objTypes,
                     c_numValues, c_numBytes, sizes) {
-              if objType == SEGARRAY && kind == ARROWSTRING {
+              // kindIsString and objIsSegArray workaround a bug in Chapel pre-2.11
+              // https://github.com/chapel-lang/chapel/issues/29429
+              const kindIsString = kind == ARROWSTRING;
+              const objIsSegArray = objType == SEGARRAY;
+              if objIsSegArray && kindIsString {
                 // Nested LIST-of-strings column. Each list's strings use
                 // def_lvl=3, with rep_lvl=0 for the first string and rep_lvl=1
                 // for the rest. Empty lists are a single null (def_lvl=1).
@@ -1502,7 +1506,7 @@ module Parquet {
                                            c_ptrToConst(repLvl));
                   }
                 }
-              } else if objType == SEGARRAY {
+              } else if objIsSegArray {
                 // Nested LIST column: write one list (segment) at a time using
                 // Arrow definition/repetition levels. def_lvl=3 marks a defined
                 // item; rep_lvl=0 starts a new list and rep_lvl=1 continues it.
@@ -1530,7 +1534,7 @@ module Parquet {
                                           c_ptrToConst(repLvl), 1);
                   }
                 }
-              } else if objType == STRINGS && kind == ARROWSTRING {
+              } else if objType == STRINGS && kindIsString {
                 var col_writer = rg_writer.NextColumn();
                 const byteOffs = offset: c_ptrConst(int);
                 const valBytes = data: c_ptrConst(uint(8));
@@ -1551,7 +1555,7 @@ module Parquet {
                     ((data: c_ptrConst(uint(8))) +
                      i*arrowElemSize(kind)): c_ptrConst(void);
                 col_writer.WriteBatch(batchData, nil, nil, batchSize);
-              } else if kind == ARROWSTRING {
+              } else if kindIsString {
                 var col_writer = rg_writer.NextColumn();
                 const def_level = 1;
 

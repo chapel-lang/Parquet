@@ -36,10 +36,10 @@ echo "Downloading Apache Arrow dependencies"
 )
 
 chpl_home=$(chpl --print-chpl-home)
-chpl_cc=$($chpl_home/util/chplenv/chpl_compiler.py --host --cc --compiler-only)
-chpl_cxx=$($chpl_home/util/chplenv/chpl_compiler.py --host --cxx --compiler-only)
-chpl_cc_flags=$($chpl_home/util/chplenv/chpl_compiler.py --host --cc --additional)
-chpl_cxx_flags=$($chpl_home/util/chplenv/chpl_compiler.py --host --cxx --additional)
+chpl_cc=$($chpl_home/util/chplenv/chpl_compiler.py --target --cc --compiler-only)
+chpl_cxx=$($chpl_home/util/chplenv/chpl_compiler.py --target --cxx --compiler-only)
+chpl_cc_flags=$($chpl_home/util/chplenv/chpl_compiler.py --target --cc --additional)
+chpl_cxx_flags=$($chpl_home/util/chplenv/chpl_compiler.py --target --cxx --additional)
 
 echo "Building Apache Arrow $ARROW_VERSION"
 (cd $ARROW_DIR && . ./arrow_exports.sh && \

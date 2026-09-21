@@ -81,6 +81,11 @@ jobs:
       cache-path: ${{ steps.key.outputs.cache-path }}
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Chapel
+        uses: jabraham17/setup-chpl@v1
+        with:
+          # version: latest
+          version: 2.9.0 # pin to 2.9 for now
       - name: Determine Arrow cache key
         id: key
         run: |

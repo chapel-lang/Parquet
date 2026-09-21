@@ -132,6 +132,15 @@ jobs:
           version: ${{ matrix.version }}
           comm: ${{ matrix.comm }}
           backend: ${{ matrix.backend }}
+      - name: Setup GASNet
+        if: ${{ matrix.comm == 'gasnet-udp' }}
+        run: |
+          echo "GASNET_ROUTE_OUTPUT=0" >> $GITHUB_ENV
+          echo "GASNET_QUIET=Y" >> $GITHUB_ENV
+          echo "GASNET_SPAWNFN=L" >> $GITHUB_ENV
+          echo "GASNET_MASTERIP=127.0.0.1" >> $GITHUB_ENV
+          echo "GASNET_WORKERIP=127.0.0.0" >> $GITHUB_ENV
+          echo "CHPL_RT_OVERSUBSCRIBED=yes" >> $GITHUB_ENV
       - name: Enable ASAN
         if: ${{ matrix.asan == 'true' }}
         run: |
@@ -139,12 +148,6 @@ jobs:
           echo "CHPL_SANITIZE_EXE=address" >> $GITHUB_ENV
 
           echo "ASAN_OPTIONS=use_sigaltstack=0,detect_leaks=0" >> $GITHUB_ENV
-          echo "GASNET_ROUTE_OUTPUT=0" >> $GITHUB_ENV
-          echo "GASNET_QUIET=Y" >> $GITHUB_ENV
-          echo "GASNET_SPAWNFN=L" >> $GITHUB_ENV
-          echo "GASNET_MASTERIP=127.0.0.1" >> $GITHUB_ENV
-          echo "GASNET_WORKERIP=127.0.0.0" >> $GITHUB_ENV
-          echo "CHPL_RT_OVERSUBSCRIBED=yes" >> $GITHUB_ENV
       - name: Check Chapel
         run: |
           chpl --version

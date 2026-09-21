@@ -58,13 +58,15 @@ jobs:
         shell: python
         run: |
           import json, os
-          versions = ["2.8.0", "2.9.0", "latest"]
+          # disable latest until 2.10 actually releases
+          latest = "2.9.0"
+          versions = ["2.8.0", "2.9.0"]
           comms = ["none", "gasnet-udp"]
           include = []
           for version in versions:
               # (backend, asan); clang backend and ASAN are only tested with latest
               configs = [("llvm", "false")]
-              if version == "latest":
+              if version == latest:
                   configs += [("clang", "false"), ("clang", "true")]
               for comm in comms:
                   for backend, asan in configs:

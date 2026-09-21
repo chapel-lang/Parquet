@@ -1185,7 +1185,7 @@ module Parquet {
             ptr = c_pointer_return_const(A[localSubDom.first]);
 
           localInfo.pushBack(
-            new pqWriteLocalChunkInfo(colName.localize(),
+            new pqWriteLocalChunkInfo(colName,
                                       ptr,
                                       nil,
                                       nil,
@@ -1232,7 +1232,7 @@ module Parquet {
                 else nil;
 
           localInfo.pushBack(
-              new pqWriteLocalChunkInfo(colName.localize(),
+              new pqWriteLocalChunkInfo(colName,
                                         dataPtr,
                                         offsetPtr,
                                         nil,
@@ -1296,7 +1296,7 @@ module Parquet {
             valPtr = c_ptrToConst(dataBuf.data[0]):c_ptrConst(void);
 
           localInfo.pushBack(
-              new pqWriteLocalChunkInfo(colName.localize(),
+              new pqWriteLocalChunkInfo(colName,
                                         valPtr,
                                         segPtr,
                                         nil,
@@ -1375,7 +1375,7 @@ module Parquet {
             valPtr = c_ptrToConst(dataBuf.data[0]): c_ptrConst(void);
 
           localInfo.pushBack(
-              new pqWriteLocalChunkInfo(colName.localize(),
+              new pqWriteLocalChunkInfo(colName,
                                         valPtr,
                                         segPtr,
                                         byteOffPtr,

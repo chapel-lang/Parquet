@@ -79,6 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.source-matrix.outputs.matrix) }}
+    name: tests-from-source with ${{ matrix.version }} (CHPL_COMM=${{ matrix.comm }}, CHPL_TARGET_COMPILER=${{ matrix.backend }}, ASAN=${{ matrix.asan }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

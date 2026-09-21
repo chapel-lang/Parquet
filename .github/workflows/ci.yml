@@ -145,7 +145,6 @@ jobs:
           path: ${{ needs.build-arrow.outputs.cache-path }}
           key: ${{ needs.build-arrow.outputs.cache-key }}
           fail-on-cache-miss: true
-          lookup-only: true
       - name: Check the project builds
         run: |
           . ./arrow.sh

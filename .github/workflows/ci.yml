@@ -65,10 +65,13 @@ jobs:
           include = []
           for version in versions:
               # (backend, asan); clang backend and ASAN are only tested with latest
-              configs = [("llvm", "false")]
-              if version == latest:
-                  configs += [("clang", "false"), ("clang", "true")]
+              # FIXME: ASAN only tested with gasnet, due to linux packages not supporting it yet
               for comm in comms:
+                  configs = [("llvm", "false")]
+                  if version == latest:
+                      configs.append(("clang", "false"))
+                      if comm != "none":
+                          configs.append(("clang", "true"))
                   for backend, asan in configs:
                       include.append({"version": version, "comm": comm,
                                       "backend": backend, "asan": asan})

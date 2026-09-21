@@ -58,9 +58,7 @@ jobs:
         shell: python
         run: |
           import json, os
-          # disable latest until 2.10 actually releases
-          latest = "2.9.0"
-          versions = ["2.8.0", "2.9.0"]
+          versions = ["2.8.0", "2.9.0", "latest"]
           comms = ["none", "gasnet-udp"]
           include = []
           for version in versions:
@@ -68,7 +66,7 @@ jobs:
               # FIXME: ASAN only tested with gasnet, due to linux packages not supporting it yet
               for comm in comms:
                   configs = [("llvm", "false")]
-                  if version == latest:
+                  if version == "latest":
                       configs.append(("clang", "false"))
                       if comm != "none":
                           configs.append(("clang", "true"))

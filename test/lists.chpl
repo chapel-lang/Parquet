@@ -20,110 +20,106 @@ import Path;
 import FileSystem as FS;
 import BlockDist.blockDist;
 
-// Locate the single per-locale file written for `base` under `dirPath`.
-proc listFile(dirPath: string, base: string) throws {
-  const files = FS.glob(Path.joinPath(dirPath, base + "_LOCALE*.parquet"));
-  return files[0];
-}
+// Check a numeric list column across all per-locale files: element type,
+// per-list sizes (`expectedSizes`, one per list) and, for int64, the flat
+// values.
+proc checkListColumn(test: borrowed Test, filePath: string, colName: string,
+                     const ref segments: [] int, const ref values: [] ?t,
+                     expectedSizes: [] int, elt: ArrowTypes) throws {
+  const numLocs = segments.targetLocales().size;
+  var rowsPerFile, valsPerFile: [0..#numLocs] int;
 
-// Read back the flat values of a numeric (int64) list column through the
-// package's list read path.
-proc readIntListValues(filename: string, colName: string, n: int,
-                       numLists: int) throws {
-  var vals: [0..#n] int;
-  var rowsPerFile = [numLists];       // number of lists in the (single) file
-  var segSizes: [0..#numLists] int;
-  var offsets: [0..#numLists] int;
-  readListFilesByName(vals, rowsPerFile, segSizes, offsets,
-                      [filename], [n], colName, ArrowTypes.int64);
-  return vals;
+  for ((f, locDom), idx) in zip(localeChunks(segments, filePath), 0..#numLocs) {
+    test.assertTrue(FS.isFile(f));
+    test.assertEqual(getArrSize(f), locDom.size);
+    rowsPerFile[idx] = locDom.size;
+    valsPerFile[idx] = + reduce expectedSizes[locDom];
+    if locDom.size == 0 then continue;
+
+    test.assertEqual(getArrType(f, colName), ArrowTypes.list);
+    test.assertEqual(getListData(f, colName), elt);
+
+    var segSizes: [0..#locDom.size] int;
+    test.assertEqual(getListColSize(f, colName, segSizes), valsPerFile[idx]);
+    for (i, r) in zip(0..#locDom.size, locDom) do
+      test.assertEqual(segSizes[i], expectedSizes[r]);
+  }
+
+  if elt == ArrowTypes.int64 {
+    const readVals = readListValues(t, localeFiles(filePath, numLocs),
+                                    rowsPerFile, valsPerFile, colName, elt);
+    for i in values.domain do test.assertEqual(readVals[i], values[i]);
+  }
 }
 
 // Regular numeric list column: [[0, 1, 2], [3], [4, 5]]
 proc testWriteListColumn(test: borrowed Test) throws {
+  requireTestLocales(test);
   var segments = blockDist.createArray(0..#3, int);
   var values = blockDist.createArray(0..#6, int);
   segments = [0, 3, 4];               // per-list start index into values
   values = [0, 1, 2, 3, 4, 5];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "listcol.parquet");
-    const overwritten = writeListColumn(filePath, "col", segments, values);
-    test.assertFalse(overwritten);
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    const f = listFile(temp.path, "listcol");
-    test.assertTrue(FS.isFile(f));
+  const filePath = Path.joinPath(temp.path, "listcol.parquet");
+  const overwritten = writeListColumn(filePath, "col", segments, values);
+  test.assertFalse(overwritten);
 
-    // structure
-    test.assertEqual(getArrSize(f), 3);                     // 3 lists (rows)
-    test.assertEqual(getArrType(f, "col"), ArrowTypes.list);
-    test.assertEqual(getListData(f, "col"), ArrowTypes.int64);
-
-    var segSizes: [0..#3] int;
-    const total = getListColSize(f, "col", segSizes);
-    test.assertEqual(total, 6);
-    test.assertEqual(segSizes[0], 3);
-    test.assertEqual(segSizes[1], 1);
-    test.assertEqual(segSizes[2], 2);
-
-    // values round-trip
-    const readVals = readIntListValues(f, "col", 6, 3);
-    for i in 0..#6 do test.assertEqual(readVals[i], values[i]);
-  }
+  checkListColumn(test, filePath, "col", segments, values, [3, 1, 2],
+                  ArrowTypes.int64);
 }
 
 // Numeric list column with empty segments: [[], [0, 1], [], [3, 4, 5, 6], []]
 proc testWriteListColumnEmptySegments(test: borrowed Test) throws {
+  requireTestLocales(test);
   var segments = blockDist.createArray(0..#5, int);
   var values = blockDist.createArray(0..#6, int);
   segments = [0, 0, 2, 2, 6];
   values = [0, 1, 3, 4, 5, 6];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "emptysegs.parquet");
-    writeListColumn(filePath, "col", segments, values);
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    const f = listFile(temp.path, "emptysegs");
+  const filePath = Path.joinPath(temp.path, "emptysegs.parquet");
+  writeListColumn(filePath, "col", segments, values);
 
-    test.assertEqual(getArrSize(f), 5);                     // 5 lists (rows)
-    test.assertEqual(getArrType(f, "col"), ArrowTypes.list);
-
-    var segSizes: [0..#5] int;
-    const total = getListColSize(f, "col", segSizes);
-    test.assertEqual(total, 6);
-    const expected = [0, 2, 0, 4, 0];
-    for i in 0..#5 do test.assertEqual(segSizes[i], expected[i]);
-  }
+  checkListColumn(test, filePath, "col", segments, values, [0, 2, 0, 4, 0],
+                  ArrowTypes.int64);
 }
 
 // Compression path: same data written with SNAPPY should round-trip.
 proc testWriteListColumnCompressed(test: borrowed Test) throws {
+  requireTestLocales(test);
   var segments = blockDist.createArray(0..#2, int);
   var values = blockDist.createArray(0..#5, int);
   segments = [0, 2];
   values = [10, 11, 12, 13, 14];
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "listsnappy.parquet");
-    writeListColumn(filePath, "col", segments, values,
-                    compression=CompressionType.SNAPPY);
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    const f = listFile(temp.path, "listsnappy");
-    test.assertEqual(getArrType(f, "col"), ArrowTypes.list);
+  const filePath = Path.joinPath(temp.path, "listsnappy.parquet");
+  writeListColumn(filePath, "col", segments, values,
+                  compression=CompressionType.SNAPPY);
 
-    var segSizes: [0..#2] int;
-    const total = getListColSize(f, "col", segSizes);
-    test.assertEqual(total, 5);
-    test.assertEqual(segSizes[0], 2);
-    test.assertEqual(segSizes[1], 3);
-
-    const readVals = readIntListValues(f, "col", 5, 2);
-    for i in 0..#5 do test.assertEqual(readVals[i], values[i]);
-  }
+  checkListColumn(test, filePath, "col", segments, values, [2, 3],
+                  ArrowTypes.int64);
 }
 
 // List-of-strings column: [["a", "bb"], ["ccc"], []]
 proc testWriteStrListColumn(test: borrowed Test) throws {
+  requireTestLocales(test);
   var segments = blockDist.createArray(0..#3, int);   // per-list start into strings
   var offsets = blockDist.createArray(0..#3, int);    // per-string start byte
   var vals = blockDist.createArray(0..#9, uint(8));   // null-terminated bytes
@@ -134,26 +130,20 @@ proc testWriteStrListColumn(test: borrowed Test) throws {
   vals[2] = "b".toByte(); vals[3] = "b".toByte(); vals[4] = 0;
   vals[5] = "c".toByte(); vals[6] = "c".toByte(); vals[7] = "c".toByte(); vals[8] = 0;
 
-  manage new tempDir() as temp {
-    const filePath = Path.joinPath(temp.path, "strlist.parquet");
-    const overwritten = writeStrListColumn(filePath, "col", segments, offsets,
-                                           vals);
-    test.assertFalse(overwritten);
+  // manual enter/exit instead of `manage`: a throw out of a manage body
+  // double-deinits the enclosing arrays (see https://github.com/chapel-lang/chapel/issues/29430)
+  var temp = new tempDir();
+  temp.enterContext();
+  defer { try! temp.exitContext(nil); }
 
-    const f = listFile(temp.path, "strlist");
-    test.assertTrue(FS.isFile(f));
+  const filePath = Path.joinPath(temp.path, "strlist.parquet");
+  const overwritten = writeStrListColumn(filePath, "col", segments, offsets,
+                                         vals);
+  test.assertFalse(overwritten);
 
-    test.assertEqual(getArrSize(f), 3);                     // 3 lists (rows)
-    test.assertEqual(getArrType(f, "col"), ArrowTypes.list);
-    test.assertEqual(getListData(f, "col"), ArrowTypes.stringArr);
-
-    var segSizes: [0..#3] int;
-    const total = getListColSize(f, "col", segSizes);
-    test.assertEqual(total, 3);                             // 3 strings total
-    test.assertEqual(segSizes[0], 2);
-    test.assertEqual(segSizes[1], 1);
-    test.assertEqual(segSizes[2], 0);
-  }
+  // list sizes [2, 1, 0]; string bytes are only checked structurally
+  checkListColumn(test, filePath, "col", segments, vals, [2, 1, 0],
+                  ArrowTypes.stringArr);
 }
 
 UnitTest.main();

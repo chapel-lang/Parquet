@@ -1,3 +1,6 @@
+# Until Chapel 2.11 mason might not specify CHPL_HOME correctly
+CHPL_HOME ?= $(shell chpl --print-chpl-home)
+
 CHPL_CXX = $(shell $(CHPL_HOME)/util/chplenv/chpl_compiler.py --cxx --target)
 ifeq ($(CHPL_CXX),)
 CHPL_CXX=$(CXX)

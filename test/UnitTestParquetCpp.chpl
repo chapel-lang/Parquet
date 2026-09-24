@@ -61,6 +61,7 @@ record parquetCall: contextManager {
 }
 
 proc testWriteRead(test: borrowed Test) throws {
+  requireTestLocales(test);
   manage new tempDir() as temp {
     const filename = Path.joinPath(temp.path, "myFile.parquet");
     const c_filename = filename.c_str();
@@ -116,6 +117,7 @@ proc testWriteRead(test: borrowed Test) throws {
 }
 
 proc testInt32Read(test: borrowed Test) throws {
+  requireTestLocales(test);
   var a: [0..#50] int;
   var expected: [0..#50] int;
   for i in 0..#50 do expected[i] = i;
@@ -129,6 +131,7 @@ proc testInt32Read(test: borrowed Test) throws {
 }
 
 proc testMultiDset(test: borrowed Test) throws {
+  requireTestLocales(test);
   const filename = "test/resources/multi-col.parquet";
   const c_filename = filename.c_str();
 
